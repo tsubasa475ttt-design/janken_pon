@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>じゃんけん並べてポンっ！ (5x5)</title>
+  <style>
+    :root {
+      --bg-color: #0f172a;
+      --card-bg: #1e293b;
+      --p1-color: #ef4444;
+      --p2-color: #3b82f6;
+      --text-color: #f8fafc;
+      --accent-color: #f59e0b;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
+    body { background: var(--bg-color); color: var(--text-color); display: flex; flex-direction: column; align-items: center; min-height: 100vh; padding: 10px; }
+
+    h1 { font-size: 1.5rem; margin: 10px 0; color: #fbbf24; text-shadow: 0 2px 4px rgba(0,0,0,0.5); text-align: center; }
+
+    .card { background: var(--card-bg); padding: 15px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); width: 100%; max-width: 480px; margin-bottom: 12px; }
+
+    /* モード選択 */
+    .mode-select { display: flex; flex-direction: column; gap: 12px; }
+    .input-group { display: flex; flex-direction: column; gap: 6px; }
+    label { font-size: 0.9rem; color: #94a3b8; }
+    input[type="text"] { padding: 10px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; font-size: 1rem; text-align: center; }
+
+    .btn { padding: 12px; border: none; border-radius: 8px; font-weight: bold; font-size: 1rem; cursor: pointer; transition: 0.2s; color: white; }
+    .btn-p1 { background: var(--p1-color); }
+    .btn-p2 { background: var(--p2-color); }
+    .btn-accent { background: var(--accent-color); }
+    .btn-gray { background: #475569; }
+    .btn:hover { opacity: 0.9; transform: translateY(-1px); }
+
+    /* ステータスバー */
+    .status-bar { display: flex; justify-content: space-between; align-items: center; font-size: 0.9rem; background: #0f172a; padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; }
+    .turn-indicator { font-weight: bold; padding: 4px 8px; border-radius: 4px; }
+    .turn-p1 { background: var(--p1-color); }
+    .turn-p2 { background: var(--p2-color); }
+
+    /* グリッド 5x5 */
+    .grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; aspect-ratio: 1; margin-bottom: 12px; }
+    .cell { background: #334155; border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 1.4rem; cursor: pointer; position: relative; border: 2px solid transparent; user-select: none; }
+    .cell.p1 { border-color: var(--p1-color); background: rgba(239,68,68,0.15); }
+    .cell.p2 { border-color: var(--p2-color); background: rgba(59,130,246,0.15); }
+    .cell .maru { position: absolute; top: 2px; right: 2px; color: #22c55e; font-size: 0.8rem; font-weight: bold; background: rgba(0,0,0,0.6); border-radius: 50%; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; }
+
+    /* じゃんけん選択ボタン */
+    .hand-selector { display: flex; justify-content: space-around; margin-bottom: 12px; gap: 8px; }
+    .hand-btn { flex: 1; padding: 8px; border-radius: 8px; background: #334155; border: 2px solid transparent; font-size: 1.2rem; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+    .hand-btn span { font-size: 0.7rem; color: #94a3b8; }
+    .hand-btn.selected { border-color: #eab308; background: #475569; }
+
+    /* ルール説明 */
+    .rules { font-size: 0.8rem; color: #94a3b8; line-height: 1.4; border-top: 1px solid #334155; margin-top: 10px; padding-top: 10px; }
+    .rules summary { font-weight: bold; color: #f8fafc; cursor: pointer; margin-bottom: 6px; }
+
+    .hidden { display: none !important; }
+  </style>
+
+  <!-- 無料で使える通信ライブラリ (PeerJS) -->
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+</head>
+<body>
+
+  <h1>じゃんけん並べてポンっ！ (5x5)</h1>
+
+  <!-- ルーム接続画面 -->
+  <div id="setup-screen" class="card">
+    <div class="mode-select">
+      <div class="input-group">
+        <label for="room-id">合い言葉 (部屋パスワード)</label>
+        <input type="text" id="room-id" placeholder="例: pon123" value="pon123">
+      </div>
+      <div style="display: flex; gap: 8px;">
+        <button class="btn btn-p1" id="btn-create" style="flex:1;">部屋を作る (1P)</button>
+        <button class="btn btn-p2" id="btn-join" style="flex:1;">部屋に入る (2P)</button>
+      </div>
+      <div id="status-message" style="text-align: center; color: #fbbf24; font-size: 0.85rem; min-height: 1.2em;"></div>
+      <hr style="border-color:#334155; margin: 5px 0;">
+      <button class="btn btn-gray" id="btn-local">1台で対戦 (オフライン)</button>
+    </div>
+  </div>
+
+  <!-- ゲーム画面 -->
+  <div id="game-screen" class="card hidden">
+    <div class="status-bar">
+      <div id="role-text" style="font-size: 0.8rem; color:#94a3b8;">モード: ローカル</div>
+      <div id="turn-display" class="turn-indicator turn-p1">1P (赤) のターン</div>
+    </div>
+
+    <!-- じゃんけん手選択 -->
+    <div class="hand-selector">
+      <button class="hand-btn selected" data-hand="goo">✊ <span>斜め攻撃</span></button>
+      <button class="hand-btn" data-hand="choki">✌️ <span>横攻撃</span></button>
+      <button class="hand-btn" data-hand="pa">✋ <span>縦攻撃</span></button>
+    </div>
+
+    <!-- 5x5 盤面 -->
+    <div id="grid" class="grid"></div>
+
+    <div style="display:flex; gap: 8px;">
+      <button class="btn btn-gray" id="btn-reset" style="flex:1;">盤面をリセット</button>
+      <button class="btn btn-gray" id="btn-back" style="flex:1;">部屋選択に戻る</button>
+    </div>
+
+    <details class="rules">
+      <summary>ルール確認 (5×5)</summary>
+      <ul>
+        <li><b>初手ルール:</b> 先攻(1P)は初手に2個配置します。以降は1個ずつ配置。</li>
+        <li><b>攻撃方向:</b> ✊(グー)=斜め / ✌️(チョキ)=横 / ✋(パー)=縦。</li>
+        <li><b>勝敗:</b> 攻撃で勝つと自分の手に「〇」がつき、負けた相手の手は消滅します。</li>
+        <li><b>保護:</b> 既に「〇」がついた手は攻撃されても消滅しません。</li>
+        <li><b>勝利条件:</b> 自分の「〇」がついた手を3つ並べる(縦横斜め)と勝利！</li>
+      </ul>
+    </details>
+  </div>
+
+  <script>
+    const HANDS = {
+      goo: { name: '✊', beats: 'choki', dirs: [[-1,-1],[-1,1],[1,-1],[1,1]] },
+      choki: { name: '✌️', beats: 'pa', dirs: [[0,-1],[0,1]] },
+      pa: { name: '✋', beats: 'goo', dirs: [[-1,0],[1,0]] }
+    };
+
+    let isOnline = false;
+    let peer = null;
+    let conn = null;
+    let myRole = 'P1'; // P1, P2, LOCAL
+    let selectedHand = 'goo';
+    
+    let gameState = {
+      board: Array(25).fill(null),
+      turn: 'P1',
+      p1PlacedCount: 0,
+      winner: null
+    };
+
+    const setupScreen = document.getElementById('setup-screen');
+    const gameScreen = document.getElementById('game-screen');
+    const gridEl = document.getElementById('grid');
+    const turnDisplay = document.getElementById('turn-display');
+    const roleText = document.getElementById('role-text');
+    const statusMsg = document.getElementById('status-message');
+
+    // 盤面グリッド生成
+    for(let i = 0; i < 25; i++) {
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.dataset.index = i;
+      cell.addEventListener('click', () => handleCellClick(i));
+      gridEl.appendChild(cell);
+    }
+
+    // じゃんけん手選択
+    document.querySelectorAll('.hand-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        document.querySelectorAll('.hand-btn').forEach(b => b.classList.remove('selected'));
+        const target = e.currentTarget;
+        target.classList.add('selected');
+        selectedHand = target.dataset.hand;
+      });
+    });
+
+    // ローカルプレイ
+    document.getElementById('btn-local').addEventListener('click', () => {
+      isOnline = false;
+      myRole = 'LOCAL';
+      roleText.textContent = "モード: ローカル対戦";
+      resetGameState();
+      showGameScreen();
+    });
+
+    // 部屋を作る (1P)
+    document.getElementById('btn-create').addEventListener('click', () => {
+      const pass = document.getElementById('room-id').value.trim();
+      if(!pass) return alert('合い言葉を入力してください');
+
+      statusMsg.textContent = '接続サーバーを準備中...';
+      const peerId = 'janken-pon-' + pass;
+
+      peer = new Peer(peerId);
+      
+      peer.on('open', () => {
+        statusMsg.textContent = '相手(2P)の参加を待っています...';
+      });
+
+      peer.on('connection', (c) => {
+        conn = c;
+        myRole = 'P1';
+        isOnline = true;
+        setupConnection();
+        roleText.textContent = `部屋: ${pass} (あなた: 1P先攻)`;
+        resetGameState();
+        showGameScreen();
+      });
+
+      peer.on('error', (err) => {
+        if(err.type === 'unavailable-id') {
+          alert('その合い言葉の部屋は既に作られています。「部屋に入る (2P)」を押すか、別の合い言葉を使ってください。');
+        } else {
+          alert('通信エラーが発生しました: ' + err.type);
+        }
+        statusMsg.textContent = '';
+      });
+    });
+
+    // 部屋に入る (2P)
+    document.getElementById('btn-join').addEventListener('click', () => {
+      const pass = document.getElementById('room-id').value.trim();
+      if(!pass) return alert('合い言葉を入力してください');
+
+      statusMsg.textContent = '1Pの部屋に接続中...';
+      peer = new Peer();
+
+      peer.on('open', () => {
+        const targetPeerId = 'janken-pon-' + pass;
+        conn = peer.connect(targetPeerId);
+
+        conn.on('open', () => {
+          myRole = 'P2';
+          isOnline = true;
+          setupConnection();
+          roleText.textContent = `部屋: ${pass} (あなた: 2P後攻)`;
+          showGameScreen();
+        });
+
+        conn.on('error', () => {
+          alert('部屋が見つかりませんでした。合い言葉を確認するか、相手が部屋を作るのをお待ちください。');
+          statusMsg.textContent = '';
+        });
+      });
+
+      peer.on('error', (err) => {
+        alert('接続に失敗しました。時間をおいて再試行してください。');
+        statusMsg.textContent = '';
+      });
+    });
+
+    function setupConnection() {
+      conn.on('data', (data) => {
+        if(data.type === 'SYNC') {
+          gameState = data.state;
+          render();
+        }
+      });
+      conn.on('close', () => {
+        alert('相手との通信が切断されました。');
+      });
+    }
+
+    function sendSync() {
+      if(isOnline && conn && conn.open) {
+        conn.send({ type: 'SYNC', state: gameState });
+      }
+    }
+
+    document.getElementById('btn-reset').addEventListener('click', () => {
+      resetGameState();
+      sendSync();
+      render();
+    });
+
+    document.getElementById('btn-back').addEventListener('click', () => {
+      if(peer) peer.destroy();
+      setupScreen.classList.remove('hidden');
+      gameScreen.classList.add('hidden');
+      statusMsg.textContent = '';
+    });
+
+    function showGameScreen() {
+      setupScreen.classList.add('hidden');
+      gameScreen.classList.remove('hidden');
+      render();
+    }
+
+    function resetGameState() {
+      gameState = {
+        board: Array(25).fill(null),
+        turn: 'P1',
+        p1PlacedCount: 0,
+        winner: null
+      };
+    }
+
+    // --- クリック処理 ---
+    function handleCellClick(index) {
+      if(gameState.winner) return;
+      if(isOnline && myRole !== gameState.turn) return; // 自分のターンでない場合
+      if(gameState.board[index] !== null) return;
+
+      const currentPlayer = gameState.turn;
+      const opponent = currentPlayer === 'P1' ? 'P2' : 'P1';
+
+      let newBoard = [...gameState.board];
+      let hasMaru = false;
+
+      const row = Math.floor(index / 5);
+      const col = index % 5;
+      const handInfo = HANDS[selectedHand];
+
+      handInfo.dirs.forEach(([dr, dc]) => {
+        const nr = row + dr;
+        const nc = col + dc;
+        if(nr >= 0 && nr < 5 && nc >= 0 && nc < 5) {
+          const targetIdx = nr * 5 + nc;
+          const targetCell = newBoard[targetIdx];
+          
+          if(targetCell && targetCell.player === opponent) {
+            if(handInfo.beats === targetCell.hand) {
+              hasMaru = true;
+              if(!targetCell.maru) {
+                newBoard[targetIdx] = null; // 〇がない手は消滅
+              }
+            }
+          }
+        }
+      });
+
+      newBoard[index] = {
+        player: currentPlayer,
+        hand: selectedHand,
+        maru: hasMaru
+      };
+
+      gameState.board = newBoard;
+
+      if(currentPlayer === 'P1' && gameState.p1PlacedCount < 1) {
+        gameState.p1PlacedCount++;
+      } else {
+        gameState.turn = opponent;
+      }
+
+      checkWinner();
+      sendSync();
+      render();
+    }
+
+    function checkWinner() {
+      const b = gameState.board;
+      const lines = [];
+
+      for(let r=0; r<5; r++) {
+        for(let c=0; c<=2; c++) lines.push([r*5+c, r*5+c+1, r*5+c+2]);
+      }
+      for(let c=0; c<5; c++) {
+        for(let r=0; r<=2; r++) lines.push([r*5+c, (r+1)*5+c, (r+2)*5+c]);
+      }
+      for(let r=0; r<=2; r++) {
+        for(let c=0; c<=2; c++) lines.push([r*5+c, (r+1)*5+c+1, (r+2)*5+c+2]);
+        for(let c=2; c<5; c++) lines.push([r*5+c, (r+1)*5+c-1, (r+2)*5+c-2]);
+      }
+
+      for(let player of ['P1', 'P2']) {
+        for(let line of lines) {
+          if(line.every(idx => b[idx] && b[idx].player === player && b[idx].maru)) {
+            gameState.winner = player;
+            return;
+          }
+        }
+      }
+
+      if(b.every(cell => cell !== null)) {
+        const p1Maru = b.filter(c => c && c.player === 'P1' && c.maru).length;
+        const p2Maru = b.filter(c => c && c.player === 'P2' && c.maru).length;
+        if(p1Maru > p2Maru) gameState.winner = 'P1';
+        else if(p2Maru > p1Maru) gameState.winner = 'P2';
+        else gameState.winner = 'DRAW';
+      }
+    }
+
+    function render() {
+      if(gameState.winner) {
+        if(gameState.winner === 'DRAW') {
+          turnDisplay.textContent = "引き分け！";
+          turnDisplay.className = "turn-indicator";
+        } else {
+          turnDisplay.textContent = `🎉 ${gameState.winner === 'P1' ? '1P (赤)' : '2P (青)'} の勝利！`;
+          turnDisplay.className = `turn-indicator turn-${gameState.winner.toLowerCase()}`;
+        }
+      } else {
+        const isP1 = gameState.turn === 'P1';
+        const p1Note = (isP1 && gameState.p1PlacedCount === 0) ? " (初手1個目)" : (isP1 && gameState.p1PlacedCount === 1) ? " (初手2個目)" : "";
+        turnDisplay.textContent = `${isP1 ? '1P (赤)' : '2P (青)'} のターン${p1Note}`;
+        turnDisplay.className = `turn-indicator turn-${isP1 ? 'p1' : 'p2'}`;
+      }
+
+      const cells = gridEl.children;
+      for(let i = 0; i < 25; i++) {
+        const cellEl = cells[i];
+        const data = gameState.board[i];
+        cellEl.className = 'cell';
+        cellEl.innerHTML = '';
+
+        if(data) {
+          cellEl.classList.add(data.player.toLowerCase());
+          cellEl.textContent = HANDS[data.hand].name;
+          if(data.maru) {
+            const maruEl = document.createElement('div');
+            maruEl.className = 'maru';
+            maruEl.textContent = '〇';
+            cellEl.appendChild(maruEl);
+          }
+        }
+      }
+    }
+  </script>
+</body>
+</html>
