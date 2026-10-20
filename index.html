@@ -25,16 +25,16 @@
       max-width: 480px;
       margin: 10px 0;
     }
-    h1 { font-size: 1.4rem; color: #fbbf24; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }
+    h1 { font-size: 1.3rem; color: #fbbf24; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }
 
     /* BGMボタン */
     .bgm-btn {
       background: #334155;
       color: #fbbf24;
       border: 1px solid #475569;
-      padding: 6px 10px;
+      padding: 6px 12px;
       border-radius: 20px;
-      font-size: 0.8rem;
+      font-size: 0.85rem;
       font-weight: bold;
       cursor: pointer;
       display: flex;
@@ -142,7 +142,7 @@
 <body>
 
   <!-- BGM要素 -->
-  <audio id="bgm" src="kibou.mp3" loop preload="auto"></audio>
+  <audio id="bgm" src="kibun.mp3" loop preload="auto"></audio>
 
   <div class="header-container">
     <h1>じゃんけん並べてポンっ！</h1>
@@ -230,37 +230,35 @@
       winner: null
     };
 
-    // BGMコントロール
+    // BGM要素
     const bgm = document.getElementById('bgm');
     const btnBgm = document.getElementById('btn-bgm');
-    let isBgmPlaying = false;
 
     function toggleBGM() {
-      if(isBgmPlaying) {
+      if (!bgm.paused) {
         bgm.pause();
         btnBgm.textContent = '🎵 BGM: OFF';
-        isBgmPlaying = false;
       } else {
         bgm.play().then(() => {
           btnBgm.textContent = '🎵 BGM: ON';
-          isBgmPlaying = true;
         }).catch(err => {
-          console.log("BGM Play error: ", err);
+          alert('BGMの再生に失敗しました。kibun.mp3 ファイルが index.html と同じフォルダにあるか確認してください。');
+          console.error(err);
         });
       }
     }
 
     btnBgm.addEventListener('click', toggleBGM);
 
-    // ユーザー操作のタイミングで自動BGM開始
-    function tryStartBGM() {
-      if(!isBgmPlaying) {
+    // 画面のどこかを一度タップしたらBGMを自動再生試行
+    document.body.addEventListener('click', function startAudioOnFirstUserGesture() {
+      if (bgm.paused) {
         bgm.play().then(() => {
           btnBgm.textContent = '🎵 BGM: ON';
-          isBgmPlaying = true;
         }).catch(() => {});
       }
-    }
+      document.body.removeEventListener('click', startAudioOnFirstUserGesture);
+    }, { once: true });
 
     const setupScreen = document.getElementById('setup-screen');
     const gameScreen = document.getElementById('game-screen');
@@ -291,7 +289,6 @@
     });
 
     document.getElementById('btn-local').addEventListener('click', () => {
-      tryStartBGM();
       isOnline = false;
       myRole = 'LOCAL';
       roleText.textContent = "モード: ローカル対戦";
@@ -300,7 +297,6 @@
     });
 
     document.getElementById('btn-create').addEventListener('click', () => {
-      tryStartBGM();
       const pass = document.getElementById('room-id').value.trim();
       if(!pass) return alert('合い言葉を入力してください');
 
@@ -334,7 +330,6 @@
     });
 
     document.getElementById('btn-join').addEventListener('click', () => {
-      tryStartBGM();
       const pass = document.getElementById('room-id').value.trim();
       if(!pass) return alert('合い言葉を入力してください');
 
