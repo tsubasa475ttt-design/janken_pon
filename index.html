@@ -76,6 +76,11 @@
     .cell { background: #334155; border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 1.4rem; cursor: pointer; position: relative; border: 2px solid transparent; user-select: none; transition: 0.2s; }
     .cell.p1 { border-color: rgba(239, 68, 68, 0.5); background: rgba(239,68,68,0.15); }
     .cell.p2 { border-color: rgba(59, 130, 246, 0.5); background: rgba(59,130,246,0.15); }
+    .cell.maru-preview {
+      border-color: #fbbf24;
+      background: rgba(245, 158, 11, 0.28);
+      box-shadow: inset 0 0 12px rgba(251, 191, 36, 0.5), 0 0 10px rgba(251, 191, 36, 0.65);
+    }
 
     /* 1P (赤) の 〇札強調 */
     .cell.p1.has-maru {
@@ -367,6 +372,7 @@
         const target = e.currentTarget;
         target.classList.add('selected');
         selectedHand = target.dataset.hand;
+        render();
       });
     });
 
@@ -545,6 +551,34 @@
       makeMove(index, selectedHand);
     }
 
+    function getMaruPreviewCells() {
+      if (gameState.winner || waitingForGameState) return new Set();
+      if (isOnline && myRole !== gameState.turn) return new Set();
+      if (isCpuMode && myRole !== gameState.turn) return new Set();
+
+      const opponent = gameState.turn === 'P1' ? 'P2' : 'P1';
+      const handInfo = HANDS[selectedHand];
+      const previewCells = new Set();
+
+      for (let index = 0; index < gameState.board.length; index++) {
+        if (gameState.board[index] !== null) continue;
+        const row = Math.floor(index / 5);
+        const col = index % 5;
+        const canEarnMaru = handInfo.dirs.some(([dr, dc]) => {
+          const nr = row + dr;
+          const nc = col + dc;
+          if (nr < 0 || nr >= 5 || nc < 0 || nc >= 5) return false;
+          const targetCell = gameState.board[nr * 5 + nc];
+          return targetCell !== null &&
+            targetCell.player === opponent &&
+            targetCell.hand === handInfo.beats;
+        });
+        if (canEarnMaru) previewCells.add(index);
+      }
+
+      return previewCells;
+    }
+
     function makeMove(index, hand) {
       const currentPlayer = gameState.turn;
       const opponent = currentPlayer === 'P1' ? 'P2' : 'P1';
@@ -690,11 +724,21 @@
       }
 
       const cells = gridEl.children;
+      const maruPreviewCells = getMaruPreviewCells();
       for(let i = 0; i < 25; i++) {
         const cellEl = cells[i];
         const data = gameState.board[i];
         cellEl.className = 'cell';
         cellEl.innerHTML = '';
+
+        if (maruPreviewCells.has(i)) {
+          cellEl.classList.add('maru-preview');
+          cellEl.title = 'ここに置くと〇がつきます';
+          cellEl.setAttribute('aria-label', 'ここに置くと〇がつきます');
+        } else {
+          cellEl.removeAttribute('title');
+          cellEl.removeAttribute('aria-label');
+        }
 
         if(data) {
           cellEl.classList.add(data.player.toLowerCase());
