@@ -237,8 +237,8 @@
     <details class="rules">
       <summary>ルール確認 (5×5)</summary>
       <ul>
-        <li><b>初手ルール:</b> 先攻(1P)は初手に2個配置します。以降は1個ずつ配置。</li>
-        <li><b>CPU対戦:</b> 1Pが先攻、CPUが後攻で、CPUは場所と手をランダムに選びます。</li>
+        <li><b>初手ルール:</b> 先攻は初手に2個配置します。先攻・後攻は対戦ごとにランダムで決まります。</li>
+        <li><b>CPU対戦:</b> CPUは先攻・後攻のどちらにもなり、場所と手をランダムに選びます。</li>
         <li><b>攻撃方向:</b> ✊(グー)=斜め / ✌️(チョキ)=横 / ✋(パー)=縦。</li>
         <li><b>勝敗:</b> 攻撃で勝つと自分の手に「〇」がつき、負けた相手の手は消滅します。</li>
         <li><b>強調表示:</b> 勝って「〇」がついた札は、プレイヤーの色（赤/青）で強力に発光します！</li>
@@ -257,6 +257,7 @@
     let isOnline = false;
     let isCpuMode = false;
     let cpuMoveTimer = null;
+    let waitingForGameState = false;
     let peer = null;
     let conn = null;
     let myRole = 'P1';
@@ -373,7 +374,6 @@
       isOnline = false;
       isCpuMode = false;
       myRole = 'LOCAL';
-      roleText.textContent = "モード: ローカル対戦";
       resetGameState();
       showGameScreen();
     });
@@ -382,7 +382,6 @@
       isOnline = false;
       isCpuMode = true;
       myRole = 'P1';
-      roleText.textContent = 'モード: CPU対戦 (あなた: 1P)';
       resetGameState();
       showGameScreen();
     });
@@ -405,10 +404,12 @@
         myRole = 'P1';
         isOnline = true;
         isCpuMode = false;
+        waitingForGameState = false;
         setupConnection();
-        roleText.textContent = `部屋: ${pass} (あなた: 1P先攻)`;
         resetGameState();
         showGameScreen();
+        if (conn.open) sendSync();
+        else conn.on('open', sendSync);
       });
 
       peer.on('error', (err) => {
@@ -436,8 +437,8 @@
           myRole = 'P2';
           isOnline = true;
           isCpuMode = false;
+          waitingForGameState = true;
           setupConnection();
-          roleText.textContent = `部屋: ${pass} (あなた: 2P後攻)`;
           showGameScreen();
         });
 
@@ -453,7 +454,13 @@
         if(data.type === 'SYNC') {
           const previousWinner = gameState.winner;
           gameState = data.state;
+          waitingForGameState = false;
+          updateModeLabel();
           if (!previousWinner && gameState.winner) playResultSound(gameState.winner);
+          render();
+        } else if (data.type === 'RESET_REQUEST' && myRole === 'P1') {
+          resetGameState();
+          sendSync();
           render();
         }
       });
@@ -468,17 +475,20 @@
       }
     }
 
-    document.getElementById('btn-reset').addEventListener('click', () => {
+    function requestReset() {
+      if (isOnline && myRole !== 'P1') {
+        if (conn && conn.open) conn.send({ type: 'RESET_REQUEST' });
+        return;
+      }
       resetGameState();
       sendSync();
       render();
-    });
+      scheduleCpuMoveIfNeeded();
+    }
 
-    document.getElementById('btn-modal-restart').addEventListener('click', () => {
-      resetGameState();
-      sendSync();
-      render();
-    });
+    document.getElementById('btn-reset').addEventListener('click', requestReset);
+
+    document.getElementById('btn-modal-restart').addEventListener('click', requestReset);
 
     document.getElementById('btn-back').addEventListener('click', () => {
       if (cpuMoveTimer) {
@@ -495,6 +505,7 @@
       setupScreen.classList.add('hidden');
       gameScreen.classList.remove('hidden');
       render();
+      scheduleCpuMoveIfNeeded();
     }
 
     function resetGameState() {
@@ -504,16 +515,31 @@
       }
       gameState = {
         board: Array(25).fill(null),
+        firstPlayer: Math.random() < 0.5 ? 'P1' : 'P2',
         turn: 'P1',
-        p1PlacedCount: 0,
+        firstPlayerPlacedCount: 0,
         winner: null
       };
+      gameState.turn = gameState.firstPlayer;
+      updateModeLabel();
+    }
+
+    function updateModeLabel() {
+      if (isCpuMode) {
+        roleText.textContent = `モード: CPU対戦 (${gameState.firstPlayer === myRole ? 'あなた' : 'CPU'}が先攻)`;
+      } else if (isOnline) {
+        const pass = document.getElementById('room-id').value.trim();
+        roleText.textContent = `部屋: ${pass} (先攻: ${gameState.firstPlayer})`;
+      } else if (myRole === 'LOCAL') {
+        roleText.textContent = `モード: ローカル対戦 (先攻: ${gameState.firstPlayer})`;
+      }
     }
 
     function handleCellClick(index) {
       if(gameState.winner) return;
+      if(waitingForGameState) return;
       if(isOnline && myRole !== gameState.turn) return;
-      if(isCpuMode && gameState.turn !== 'P1') return;
+      if(isCpuMode && gameState.turn !== myRole) return;
       if(gameState.board[index] !== null) return;
 
       makeMove(index, selectedHand);
@@ -558,8 +584,8 @@
 
       gameState.board = newBoard;
 
-      if(currentPlayer === 'P1' && gameState.p1PlacedCount < 1) {
-        gameState.p1PlacedCount++;
+      if(currentPlayer === gameState.firstPlayer && gameState.firstPlayerPlacedCount < 1) {
+        gameState.firstPlayerPlacedCount++;
       } else {
         gameState.turn = opponent;
       }
@@ -569,14 +595,18 @@
       if (gameState.winner) playResultSound(gameState.winner);
       sendSync();
       render();
-      if (isCpuMode && !gameState.winner && gameState.turn === 'P2') scheduleCpuMove();
+      scheduleCpuMoveIfNeeded();
+    }
+
+    function scheduleCpuMoveIfNeeded() {
+      if (isCpuMode && !gameState.winner && gameState.turn !== myRole) scheduleCpuMove();
     }
 
     function scheduleCpuMove() {
       if (cpuMoveTimer) clearTimeout(cpuMoveTimer);
       cpuMoveTimer = setTimeout(() => {
         cpuMoveTimer = null;
-        if (!isCpuMode || gameState.winner || gameState.turn !== 'P2') return;
+        if (!isCpuMode || gameState.winner || gameState.turn === myRole) return;
         const emptyCells = gameState.board
           .map((cell, index) => cell === null ? index : -1)
           .filter(index => index !== -1);
@@ -646,8 +676,16 @@
       } else {
         winModal.classList.add('hidden');
         const isP1 = gameState.turn === 'P1';
-        const p1Note = (isP1 && gameState.p1PlacedCount === 0) ? " (初手1個目)" : (isP1 && gameState.p1PlacedCount === 1) ? " (初手2個目)" : "";
-        turnDisplay.textContent = `${isP1 ? '1P (赤)' : '2P (青)'} のターン${p1Note}`;
+        const isFirstPlayer = gameState.turn === gameState.firstPlayer;
+        const firstPlayerNote = isFirstPlayer
+          ? ` (初手${gameState.firstPlayerPlacedCount + 1}個目)`
+          : '';
+        const playerLabel = isCpuMode
+          ? `${gameState.turn === myRole ? 'あなた' : 'CPU'} (${isP1 ? '1P (赤)' : '2P (青)'})`
+          : isP1 ? '1P (赤)' : '2P (青)';
+        turnDisplay.textContent = waitingForGameState
+          ? '対戦状態を同期中...'
+          : `${playerLabel} のターン${firstPlayerNote}`;
         turnDisplay.className = `turn-indicator turn-${isP1 ? 'p1' : 'p2'}`;
       }
 
