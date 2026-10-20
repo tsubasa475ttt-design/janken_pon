@@ -43,6 +43,12 @@
       transition: 0.2s;
     }
     .bgm-btn:hover { background: #475569; }
+    .header-controls { display: flex; gap: 6px; }
+    @media (max-width: 420px) {
+      .header-container { align-items: flex-start; flex-direction: column; gap: 8px; }
+      .header-controls { width: 100%; }
+      .header-controls .bgm-btn { flex: 1; justify-content: center; }
+    }
 
     .card { background: var(--card-bg); padding: 15px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); width: 100%; max-width: 480px; margin-bottom: 12px; position: relative; }
 
@@ -172,7 +178,10 @@
 
   <div class="header-container">
     <h1>じゃんけん並べてポンっ！</h1>
-    <button class="bgm-btn" id="btn-bgm">🎵 BGM: OFF</button>
+    <div class="header-controls">
+      <button class="bgm-btn" id="btn-bgm">🎵 BGM: OFF</button>
+      <button class="bgm-btn" id="btn-sfx">🔊 効果音: ON</button>
+    </div>
   </div>
 
   <!-- ルーム接続画面 -->
@@ -189,6 +198,7 @@
       <div id="status-message" style="text-align: center; color: #fbbf24; font-size: 0.85rem; min-height: 1.2em;"></div>
       <hr style="border-color:#334155; margin: 5px 0;">
       <button class="btn btn-gray" id="btn-local">1台で対戦 (オフライン)</button>
+      <button class="btn btn-accent" id="btn-cpu">CPUと対戦 (1P)</button>
     </div>
   </div>
 
@@ -228,6 +238,7 @@
       <summary>ルール確認 (5×5)</summary>
       <ul>
         <li><b>初手ルール:</b> 先攻(1P)は初手に2個配置します。以降は1個ずつ配置。</li>
+        <li><b>CPU対戦:</b> 1Pが先攻、CPUが後攻で、CPUは場所と手をランダムに選びます。</li>
         <li><b>攻撃方向:</b> ✊(グー)=斜め / ✌️(チョキ)=横 / ✋(パー)=縦。</li>
         <li><b>勝敗:</b> 攻撃で勝つと自分の手に「〇」がつき、負けた相手の手は消滅します。</li>
         <li><b>強調表示:</b> 勝って「〇」がついた札は、プレイヤーの色（赤/青）で強力に発光します！</li>
@@ -244,6 +255,8 @@
     };
 
     let isOnline = false;
+    let isCpuMode = false;
+    let cpuMoveTimer = null;
     let peer = null;
     let conn = null;
     let myRole = 'P1';
@@ -259,6 +272,48 @@
     // BGM要素
     const bgm = document.getElementById('bgm');
     const btnBgm = document.getElementById('btn-bgm');
+    const btnSfx = document.getElementById('btn-sfx');
+    let sfxEnabled = true;
+    let audioContext = null;
+
+    function playSfx(kind) {
+      if (!sfxEnabled) return;
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return;
+      if (!audioContext) audioContext = new AudioContextClass();
+      if (audioContext.state === 'suspended') audioContext.resume();
+
+      const notes = {
+        place: [[660, 0.09]],
+        capture: [[520, 0.1], [780, 0.14]],
+        win: [[523, 0.13], [659, 0.13], [784, 0.22]],
+        lose: [[392, 0.16], [294, 0.24]],
+        draw: [[440, 0.14], [440, 0.14]]
+      }[kind];
+      if (!notes) return;
+
+      let offset = 0;
+      notes.forEach(([frequency, duration]) => {
+        const oscillator = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        const start = audioContext.currentTime + offset;
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(frequency, start);
+        gain.gain.setValueAtTime(0.001, start);
+        gain.gain.exponentialRampToValueAtTime(0.18, start + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.001, start + duration);
+        oscillator.connect(gain);
+        gain.connect(audioContext.destination);
+        oscillator.start(start);
+        oscillator.stop(start + duration);
+        offset += duration * 0.85;
+      });
+    }
+
+    btnSfx.addEventListener('click', () => {
+      sfxEnabled = !sfxEnabled;
+      btnSfx.textContent = `🔊 効果音: ${sfxEnabled ? 'ON' : 'OFF'}`;
+    });
 
     function toggleBGM() {
       if (!bgm.paused) {
@@ -268,7 +323,7 @@
         bgm.play().then(() => {
           btnBgm.textContent = '🎵 BGM: ON';
         }).catch(err => {
-          alert('BGMの再生に失敗しました。kibun.mp3 ファイルが index.html と同じフォルダにあるか確認してください。');
+          alert('BGMの再生に失敗しました。kibou.mp3 ファイルが index.html と同じフォルダにあるか確認してください。');
           console.error(err);
         });
       }
@@ -316,8 +371,18 @@
 
     document.getElementById('btn-local').addEventListener('click', () => {
       isOnline = false;
+      isCpuMode = false;
       myRole = 'LOCAL';
       roleText.textContent = "モード: ローカル対戦";
+      resetGameState();
+      showGameScreen();
+    });
+
+    document.getElementById('btn-cpu').addEventListener('click', () => {
+      isOnline = false;
+      isCpuMode = true;
+      myRole = 'P1';
+      roleText.textContent = 'モード: CPU対戦 (あなた: 1P)';
       resetGameState();
       showGameScreen();
     });
@@ -339,6 +404,7 @@
         conn = c;
         myRole = 'P1';
         isOnline = true;
+        isCpuMode = false;
         setupConnection();
         roleText.textContent = `部屋: ${pass} (あなた: 1P先攻)`;
         resetGameState();
@@ -369,6 +435,7 @@
         conn.on('open', () => {
           myRole = 'P2';
           isOnline = true;
+          isCpuMode = false;
           setupConnection();
           roleText.textContent = `部屋: ${pass} (あなた: 2P後攻)`;
           showGameScreen();
@@ -384,7 +451,9 @@
     function setupConnection() {
       conn.on('data', (data) => {
         if(data.type === 'SYNC') {
+          const previousWinner = gameState.winner;
           gameState = data.state;
+          if (!previousWinner && gameState.winner) playResultSound(gameState.winner);
           render();
         }
       });
@@ -412,6 +481,10 @@
     });
 
     document.getElementById('btn-back').addEventListener('click', () => {
+      if (cpuMoveTimer) {
+        clearTimeout(cpuMoveTimer);
+        cpuMoveTimer = null;
+      }
       if(peer) peer.destroy();
       setupScreen.classList.remove('hidden');
       gameScreen.classList.add('hidden');
@@ -425,6 +498,10 @@
     }
 
     function resetGameState() {
+      if (cpuMoveTimer) {
+        clearTimeout(cpuMoveTimer);
+        cpuMoveTimer = null;
+      }
       gameState = {
         board: Array(25).fill(null),
         turn: 'P1',
@@ -436,17 +513,23 @@
     function handleCellClick(index) {
       if(gameState.winner) return;
       if(isOnline && myRole !== gameState.turn) return;
+      if(isCpuMode && gameState.turn !== 'P1') return;
       if(gameState.board[index] !== null) return;
 
+      makeMove(index, selectedHand);
+    }
+
+    function makeMove(index, hand) {
       const currentPlayer = gameState.turn;
       const opponent = currentPlayer === 'P1' ? 'P2' : 'P1';
 
       let newBoard = [...gameState.board];
       let hasMaru = false;
+      let capturedAny = false;
 
       const row = Math.floor(index / 5);
       const col = index % 5;
-      const handInfo = HANDS[selectedHand];
+      const handInfo = HANDS[hand];
 
       handInfo.dirs.forEach(([dr, dc]) => {
         const nr = row + dr;
@@ -460,6 +543,7 @@
               hasMaru = true;
               if(!targetCell.maru) {
                 newBoard[targetIdx] = null;
+                capturedAny = true;
               }
             }
           }
@@ -468,7 +552,7 @@
 
       newBoard[index] = {
         player: currentPlayer,
-        hand: selectedHand,
+        hand,
         maru: hasMaru
       };
 
@@ -481,8 +565,37 @@
       }
 
       checkWinner();
+      playSfx(capturedAny ? 'capture' : 'place');
+      if (gameState.winner) playResultSound(gameState.winner);
       sendSync();
       render();
+      if (isCpuMode && !gameState.winner && gameState.turn === 'P2') scheduleCpuMove();
+    }
+
+    function scheduleCpuMove() {
+      if (cpuMoveTimer) clearTimeout(cpuMoveTimer);
+      cpuMoveTimer = setTimeout(() => {
+        cpuMoveTimer = null;
+        if (!isCpuMode || gameState.winner || gameState.turn !== 'P2') return;
+        const emptyCells = gameState.board
+          .map((cell, index) => cell === null ? index : -1)
+          .filter(index => index !== -1);
+        if (emptyCells.length === 0) return;
+        const index = emptyCells[Math.floor(Math.random() * emptyCells.length)];
+        const hands = Object.keys(HANDS);
+        const hand = hands[Math.floor(Math.random() * hands.length)];
+        makeMove(index, hand);
+      }, 550);
+    }
+
+    function playResultSound(winner) {
+      if (winner === 'DRAW') {
+        playSfx('draw');
+      } else if ((!isOnline && !isCpuMode) || winner === myRole) {
+        playSfx('win');
+      } else {
+        playSfx('lose');
+      }
     }
 
     function checkWinner() {
